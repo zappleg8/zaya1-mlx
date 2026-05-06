@@ -1,0 +1,17 @@
+   Updating https://github.com/Zyphra/transformers.git (zaya1)
+    Updated https://github.com/Zyphra/transformers.git (f0ab5bef9e23b79a9b32f50500d0b52f273a9baf)
+Resolved 18 packages in 1m 29s
+   Building transformers @ git+https://github.com/Zyphra/transformers.git@f0ab5bef9e23b79a9b32f50500d0b52f273a9baf
+      Built transformers @ git+https://github.com/Zyphra/transformers.git@f0ab5bef9e23b79a9b32f50500d0b52f273a9baf
+Prepared 3 packages in 3.11s
+Uninstalled 2 packages in 12ms
+Installed 7 packages in 46ms
+ + charset-normalizer==3.4.7
+ - huggingface-hub==1.14.0
+ + huggingface-hub==0.36.2
+ + regex==2026.4.4
+ + requests==2.33.1
+ - tokenizers==0.23.1
+ + tokenizers==0.22.2
+ + transformers==4.57.1 (from git+https://github.com/Zyphra/transformers.git@f0ab5bef9e23b79a9b32f50500d0b52f273a9baf)
+ + urllib3==2.6.3
