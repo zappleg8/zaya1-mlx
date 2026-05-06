@@ -1,0 +1,6 @@
+.venv/
+activations/
+__pycache__/
+*.pyc
+.pytest_cache/
+notes/_inventory.tmp.md

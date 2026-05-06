@@ -1,0 +1,24 @@
+[project]
+name = "zaya1-mlx-reference"
+version = "0.0.0"
+description = "PyTorch reference environment for the ZAYA1-8B MLX port. Runs forward passes and dumps activation tensors for layer-by-layer comparison."
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+  # Pinned to versions Zyphra's fork is known to work with as of 2026-05-06.
+  # If the install in Task 3 fails, the failure mode plus resolution belong in reference/notes/install-log.md.
+  "torch>=2.4,<2.6",
+  "safetensors>=0.4",
+  "huggingface_hub>=0.26",
+  "numpy>=1.26,<2.0",
+  "tqdm",
+  "sentencepiece",
+  "tokenizers>=0.20",
+  "protobuf",
+  "accelerate>=1.0",
+  "einops",
+]
+
+[tool.uv]
+# Zyphra's transformers fork is installed via Task 3, not as a dep here, because
+# pyproject.toml + uv have flaky behavior around git-pinned packages on macOS.
