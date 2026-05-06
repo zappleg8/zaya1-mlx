@@ -19,10 +19,11 @@ Before Task 1, confirm working directory and tooling.
 Run: `uv --version`
 Expected: prints a version (e.g. `uv 0.5.x`). If "command not found", install: `brew install uv`.
 
-- [ ] **Check `huggingface-cli` is available and authenticated**
+- [ ] **Check `hf` CLI is available and authenticated**
 
-Run: `huggingface-cli whoami`
-Expected: prints HF username. If error, run `huggingface-cli login` and paste a token from https://huggingface.co/settings/tokens (read scope is enough for downloading public models).
+Run: `hf auth whoami`
+Expected: prints `user=<username>`. The legacy `huggingface-cli` is deprecated; use `hf`.
+If not logged in: `hf auth login` and paste a token from https://huggingface.co/settings/tokens (read scope is enough for public models).
 
 - [ ] **Check available disk space**
 
@@ -47,7 +48,8 @@ Run:
 ```bash
 cd ~/code/personal/zaya1-mlx
 mkdir -p reference/activations reference/notes validation scripts zaya1_mlx
-touch reference/.gitkeep reference/activations/.gitkeep reference/notes/.gitkeep validation/.gitkeep scripts/.gitkeep
+# .gitkeep only in dirs not already gitignored. activations/ is ignored, skip it.
+touch reference/notes/.gitkeep validation/.gitkeep scripts/.gitkeep
 ```
 
 - [ ] **Step 2: Create empty `zaya1_mlx` package init**
@@ -132,7 +134,9 @@ Expected: prints `Using CPython 3.11.x` and `Activate with: source .venv/bin/act
 Run:
 ```bash
 cd ~/code/personal/zaya1-mlx/reference
-uv pip install --python .venv/bin/python -r <(uv pip compile pyproject.toml 2>/dev/null) || uv pip install --python .venv/bin/python torch safetensors huggingface_hub numpy tqdm sentencepiece tokenizers protobuf accelerate einops
+uv pip install --python .venv/bin/python \
+  "torch>=2.4,<2.6" safetensors "huggingface_hub>=0.26" "numpy>=1.26,<2.0" \
+  tqdm sentencepiece "tokenizers>=0.20" protobuf "accelerate>=1.0" einops
 ```
 Expected: install completes without error. If torch wheel fails to find macOS arm64 build, fall back to `uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu`.
 
@@ -258,19 +262,19 @@ set -euo pipefail
 
 REPO="Zyphra/ZAYA1-8B"
 
-if ! command -v huggingface-cli >/dev/null 2>&1; then
-  echo "huggingface-cli not on PATH. Install with: pip install huggingface_hub[cli]" >&2
+if ! command -v hf >/dev/null 2>&1; then
+  echo "hf CLI not on PATH. Install with: pip install -U huggingface_hub" >&2
   exit 1
 fi
 
 echo "Downloading $REPO to local HF cache..."
-huggingface-cli download "$REPO" \
+hf download "$REPO" \
   --include "*.safetensors" "*.json" "*.txt" "tokenizer*" \
   --exclude "*.bin" "*.gguf"
 
 echo
 echo "Cache location:"
-huggingface-cli scan-cache | grep "$REPO" || true
+hf cache scan | grep "$REPO" || true
 ```
 
 Make executable: `chmod +x scripts/download_weights.sh`.
@@ -963,7 +967,7 @@ git push origin main
 Before declaring Phase 0 done, the following must be true. Verify each:
 
 - [ ] `reference/.venv/bin/python -c "import transformers; from transformers.models.zaya.modeling_zaya import ZayaForCausalLM"` succeeds.
-- [ ] `huggingface-cli scan-cache | grep ZAYA1-8B` shows the weights are downloaded.
+- [ ] `hf cache scan | grep ZAYA1-8B` shows the weights are downloaded.
 - [ ] `reference/notes/zaya-architecture.md` exists, contains a class catalog, and answers all 5 open questions from design §5.
 - [ ] `reference/activations/smoke/manifest.json` exists; `captured_modules` has length > 100.
 - [ ] `reference/activations/smoke/L0_*.npy` files exist and are loadable as numpy arrays.
