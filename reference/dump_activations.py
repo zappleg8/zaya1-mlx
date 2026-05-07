@@ -184,6 +184,10 @@ def main() -> int:
     prompt = prompts[args.prompt_id]
 
     out_dir = ACTIVATIONS_ROOT / args.prompt_id
+    if out_dir.exists():
+        for f in out_dir.iterdir():
+            if f.is_file():
+                f.unlink()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading {REPO_ID} (slow on first run; bf16 weights are ~16GB)...", flush=True)
