@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phase 2 — COMPLETE.** Phase 3 (CCA forward implementation) not yet started.
+**Phase 3 — COMPLETE.** Phase 4 (ZayaAttention forward — CCA + standard SDPA + GQA + KV cache) not yet started.
 
 ## What's done
 
@@ -33,6 +33,13 @@ Phase 2 (partial RoPE):
 - Confirmed: mlx-lm's built-in `nn.RoPE(dims=64, base=5e6, traditional=False)` correctly implements Zaya's partial RoPE within bf16 rounding noise — no custom helper needed
 - `nn.RoPE` added to `ZayaAttention` skeleton (Phase 4 will use it)
 
+Phase 3 (CCA forward):
+- `CCA.__call__` implemented in HF `(B, S, H)` layout: linear_q/k projections, pre-conv mean residual, two-stage depthwise/grouped Conv1d on packed [Q, K], two-stream V (current + time-shifted), per-head L2-normalized Q/K with learnable temperature
+- 3/3 CCA forward parity tests pass at L0, L40, L78 within bf16 noise floor
+- bf16 noise budget for CCA documented: Q ~5e-2, K ~2.5e-1 (K head 0 has large pre-norm magnitudes ~30k where bf16 ULP is 128). V is exact (linear projections only, no normalization).
+- Discovered and fixed: dump tests were using prompt `smoke` and clobbering the full reference dump. Switched to dedicated `_test` prompt.
+- Validation suite at 14/14 (8 weight loading + 3 partial RoPE + 3 CCA forward)
+
 ## Headline finding from Phase 0
 
 **The architecture is not a Mamba+Attention hybrid.** What was thought to be SSM is **CCA** (Compressed Causal Attention) — a custom attention variant with a depthwise 1D causal conv on Q+K and a time-shifted V stream. R1 (custom SSM parity unreachable) is eliminated.
@@ -43,15 +50,9 @@ PyTorch stores cos/sin as bf16 in the model. MLX computes them in fp32 internall
 
 ## What's next
 
-**Phase 3: CCA forward implementation.** The most novel piece of the model. Plan to be written. Key components:
+**Phase 4: ZayaAttention forward** (full attention block: CCA outputs Q/K/V → reshape into multi-head layout → apply RoPE → KV cache update → GQA repeat → standard SDPA → o_proj). Plan to be written.
 
-1. Two-stage depthwise 1D causal conv on concatenated Q+K (kernel sizes `cca_time0=2`, `cca_time1=2`)
-2. Mean residual mixing (pre-conv Q/K averaged with post-conv)
-3. Two-stream V (current hidden state + time-shifted)
-4. Per-head L2 normalization with learnable temperature
-5. Output (Q, K, V) ready for standard attention compute
-
-Gate: parity on `self_attn_qkv_q`, `_k`, `_v` reference tensors at L0, L40, L78 (within bf16 noise).
+Gate: parity on `self_attn_out` reference tensors at L0, L40, L78 (within bf16 noise).
 
 ## Blockers
 
@@ -72,7 +73,8 @@ None.
 - Phase 0 plan: [`docs/superpowers/plans/2026-05-06-phase0-reference-scaffolding.md`](docs/superpowers/plans/2026-05-06-phase0-reference-scaffolding.md)
 - Phase 1 plan: [`docs/superpowers/plans/2026-05-06-phase1-skeleton-and-weight-loading.md`](docs/superpowers/plans/2026-05-06-phase1-skeleton-and-weight-loading.md)
 - Phase 2 plan: [`docs/superpowers/plans/2026-05-06-phase2-partial-rope.md`](docs/superpowers/plans/2026-05-06-phase2-partial-rope.md)
-- Phase 3+ plans: not yet written.
+- Phase 3 plan: [`docs/superpowers/plans/2026-05-06-phase3-cca-forward.md`](docs/superpowers/plans/2026-05-06-phase3-cca-forward.md)
+- Phase 4+ plans: not yet written.
 
 ## Repos
 
