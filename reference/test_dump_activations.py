@@ -24,7 +24,7 @@ def smoke_dump_dir() -> Path:
             sys.executable,
             str(SCRIPT),
             "--prompt-id",
-            "smoke",
+            "_test",
             "--max-layers",
             "2",
         ],
@@ -49,7 +49,7 @@ def test_dump_produces_manifest(smoke_dump_dir: Path):
     manifest_file = smoke_dump_dir / "manifest.json"
     assert manifest_file.exists()
     data = json.loads(manifest_file.read_text())
-    assert data["prompt_id"] == "smoke"
+    assert data["prompt_id"] == "_test"
     assert "torch_version" in data
     assert "transformers_commit" in data
     assert "captured_modules" in data

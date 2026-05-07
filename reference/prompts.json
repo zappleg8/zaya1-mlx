@@ -7,6 +7,12 @@
       "purpose": "smoke test: short, deterministic, easy to eyeball. ~6 tokens input."
     },
     {
+      "id": "_test",
+      "text": "Hi",
+      "max_new_tokens": 1,
+      "purpose": "dedicated prompt for test_dump_activations.py — avoids clobbering reference dumps when running tests"
+    },
+    {
       "id": "reasoning_short",
       "text": "<think>If x + 3 = 7, what is x? Solve step by step.</think>",
       "max_new_tokens": 16,
