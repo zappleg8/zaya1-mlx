@@ -1,0 +1,12 @@
+[project]
+name = "zaya1-mlx-validation"
+version = "0.0.0"
+description = "MLX + editable mlx-lm fork for layer-by-layer parity validation against PyTorch reference dumps."
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+  "mlx>=0.20",
+  "numpy>=1.26,<2.0",
+  "safetensors>=0.4",
+  "pytest>=8.0",
+]
