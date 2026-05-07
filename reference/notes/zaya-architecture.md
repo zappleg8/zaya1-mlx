@@ -446,15 +446,59 @@ Below is the canonical hook list. **Even-indexed layers** are ATT (use the `att_
 
 ---
 
-## Captured shape inventory
+## Captured shape inventory (smoke prompt, input shape (1, 7))
 
-To be filled in by Task 8 once the dump runs. Expected key counts:
-- Common per layer × 80 layers = 320 entries
-- Even-layer ATT: 9 keys × 40 layers = 360 entries
-- Odd-layer MoE: ~4 + 16×2 = 36 keys per layer × 40 layers = 1,440 entries (most experts will be empty for any given prompt — only chosen experts produce output)
-- Model level: ~5 entries
+Three reference dumps captured: smoke (7 tokens), reasoning_short (22 tokens), long_context_seed (78 tokens). 3,046 captured tensors per prompt. Sizes scale with seq_len.
 
-Total: ~2,000 .npy files per prompt. A 32-token forward pass on smoke prompt with 80 layers will produce roughly this many tensor outputs.
+Per-layer suffixes — shapes for one sample layer (the others have identical shapes for the same suffix). Sequence length is 7 in this snapshot.
+
+| suffix | sample_layer | shape | dtype | notes |
+|---|---|---|---|---|
+| input_norm_out | L0 | (1, 7, 2048) | float32 | RMSNorm output before block |
+| layer_out | L0 | (1, 7, 2048) | float32 | Decoder layer final output |
+| res_scale_out | L0 | (1, 7, 2048) | float32 | After ResidualScaling affine |
+| self_attn_o_proj_out | L0 | (1, 7, 2048) | float32 | Output projection: hidden_size//2=1024 → 2048 |
+| self_attn_out | L0 | (1, 7, 2048) | float32 | Final attention output (= o_proj_out at top of stack) |
+| self_attn_qkv_conv_qk_0_out | L0 | (1, 1280, 8) | float32 | After first depthwise conv. 1280 = latent_q (1024) + latent_k (256). 8 = S (7) + 1 padding consumed by kernel-2 conv |
+| self_attn_qkv_conv_qk_1_out | L0 | (1, 1280, 7) | float32 | After second conv (final qk_packed3) |
+| self_attn_qkv_conv_qk_out | L0 | (1, 1280, 7) | float32 | Sequential parent's output (= conv_qk_1_out) |
+| self_attn_qkv_k | L0 | (1, 7, 256) | float32 | CCA K output: 2 KV heads × 128 head_dim |
+| self_attn_qkv_linear_k_out | L0 | (7, 1, 256) | float32 | [S, B, latent_k_dim] layout (pre-conv K projection) |
+| self_attn_qkv_linear_q_out | L0 | (7, 1, 1024) | float32 | [S, B, latent_q_dim] layout (pre-conv Q projection) |
+| self_attn_qkv_q | L0 | (1, 7, 1024) | float32 | CCA Q output: 8 effective heads × 128 head_dim |
+| self_attn_qkv_v | L0 | (1, 7, 256) | float32 | CCA V output: 2 KV heads × 128 head_dim |
+| self_attn_qkv_val_proj1_out | L0 | (7, 1, 128) | float32 | V₁ stream (current hidden state, latent_k_dim/2 = 128) |
+| self_attn_qkv_val_proj2_out | L0 | (7, 1, 128) | float32 | V₂ stream (time-shifted hidden state) |
+| zaya_block_experts_local_experts_{i}_linear_fc1_out | L11 | (n_i, 4096) | float32 | Per-expert FC1; n_i = tokens routed to expert i; sparse |
+| zaya_block_experts_local_experts_{i}_linear_fc2_out | L11 | (n_i, 2048) | float32 | Per-expert FC2 |
+| zaya_block_experts_local_experts_{i}_out | L11 | (n_i, 2048) | float32 | Per-expert final output |
+| zaya_block_experts_out | L11 | (S=7, 2048) | float32 | Concatenated experts output, in routing-sorted order |
+| zaya_block_out | L11 | (1, 7, 2048) | float32 | MoE block output, original-order, gated by route_prob |
+| zaya_block_router_down_proj_out | L11 | (1, 7, 256) | float32 | Down-projection from hidden_size to mlp_expansion=256 |
+| zaya_block_router_non_linearity_out | L11 | (1, 7, 256) | float32 | GELU output (the second one in the Sequential) |
+| zaya_block_router_out | L11 | (7, 1) | float32 | route_prob (first tensor of the 3-tuple return) |
+| zaya_block_router_rmsnorm_eda_out | L11 | (1, 7, 256) | float32 | RMSNorm of post-EDA router hidden states |
+| zaya_block_router_router_mlp_0_out | L11 | (1, 7, 256) | float32 | First Linear in router MLP |
+| zaya_block_router_router_mlp_2_out | L11 | (1, 7, 256) | float32 | Second Linear in router MLP |
+| zaya_block_router_router_mlp_4_out | L11 | (1, 7, 17) | float32 | Logits over 17 experts (16 real + 1 skip) |
+| zaya_block_router_router_mlp_out | L11 | (1, 7, 17) | float32 | Sequential parent's output (= router_mlp_4_out) |
+
+For the smoke prompt (7 tokens), only 7 of the 17 experts received tokens at L11; the rest had shape `(0, ·)` outputs. This is expected — top-1 sparse routing.
+
+## Global keys
+
+| key | shape | dtype | notes |
+|---|---|---|---|
+| global_lm_head_out | (1, 7, 262272) | float32 | Logits over vocab |
+| global_model_embed_tokens_out | (1, 7, 2048) | float32 | Token embedding output |
+| global_model_final_norm_out | (1, 7, 2048) | float32 | Output of final RMSNorm before lm_head |
+| global_model_out | (1, 7, 2048) | float32 | ZayaModel wrapper (= last_hidden_state) |
+| global_model_res_scale_out | (1, 7, 2048) | float32 | Final ResidualScaling output |
+| global_model_rotary_emb_out | (1, 7, 64) | float32 | cos tensor only (sin not captured by current heuristic; rotary_dim = head_dim × partial_rotary_factor = 128 × 0.5 = 64) |
+
+**Known dump limitations:**
+- The rotary_emb returns `(cos, sin)` but only the first tensor (`cos`) is saved by the current `_save_output` heuristic for 2-tuples. For Phase 2 (partial RoPE) parity, we'll need to either improve the dump to capture both, or just verify `cos` (since `sin` is computed deterministically from the same `rope_theta` and position_ids).
+- Per-expert outputs include shape `(0, ·)` for experts with zero tokens routed to them. These should be skipped during MLX comparison (no data to compare).
 
 ---
 
