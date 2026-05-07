@@ -1,7 +1,8 @@
 # ZAYA1-8B → MLX Port: Design
 
 **Date:** 2026-05-06
-**Status:** Approved (brainstorm), pending implementation plan
+**Status:** Approved (brainstorm), implementation in progress
+**Revision:** R1 (2026-05-06) — §5, §7, §8, §9 amended after reading the PyTorch source. Headline correction: there is no SSM in ZAYA1; what was thought to be Mamba is **CCA** (Compressed Causal Attention). See `reference/notes/zaya-architecture.md` for the source-grounded architecture catalog that supersedes any earlier claims.
 
 ---
 
@@ -32,49 +33,58 @@ The MLX port is also the prerequisite for local agentic experiments on Apple Sil
 - 760 M active parameters per forward pass (top-1 MoE routing) → fast despite 8.4 B total
 - Reference PyTorch and MLX **never resident in the same Python process** (RAM constraint)
 
-## 5. Architecture Overview
+## 5. Architecture Overview (R1 — corrected after source read)
 
-Verified from `Zyphra/transformers @ zaya1` and `Zyphra/ZAYA1-8B/config.json`. Facts I have committed to:
+All facts in this section are now grounded in `Zyphra/transformers @ zaya1` (commit `f0ab5bef`) and verified against the live `Zyphra/ZAYA1-8B/config.json`. Detailed catalog at `reference/notes/zaya-architecture.md`.
+
+**Config facts (unchanged from R0):**
 
 - `hidden_size`: 2048
 - `num_hidden_layers`: 80
-- `num_attention_heads`: 16, `num_key_value_heads`: 2 (GQA, 8:1)
-- `kv_channels`: 128
-- `ffn_hidden_size`: 4096
+- `num_attention_heads`: 16, `num_key_value_heads`: 2
+- `cca_num_q_heads`: 8 (effective Q heads after CCA compression)
+- `kv_channels`: 128 (head_dim)
+- `ffn_hidden_size`: 4096 (with gated linear unit, effective output is 2048)
 - `vocab_size`: 262272
 - `max_position_embeddings`: 131072
-- `num_experts`: 16, `moe_router_topk`: 1
-- `partial_rotary_factor`: 0.5
+- `num_experts`: 16, `moe_router_topk`: 1, `zaya_mlp_expansion`: 256 (router internal dim)
+- `partial_rotary_factor`: 0.5 (rotary_dim = 64 of 128 head dims)
 - `rope_theta`: 5000000, `rope_scaling`: false
-- `zaya_use_mod`: true (Mixture of Depths — skip-expert)
-- `zaya_use_eda`: true (Exponential Depth Averaging)
-- `zaya_mlp_expansion`: 256
-- `mamba_cache_dtype`: float32
-- `residual_in_fp32`: true
-- `scale_residual_merge`: true
-- `normalization`: RMSNorm
-- `activation_func`: swiglu
+- `zaya_use_mod`: true (skip-expert), `zaya_use_eda`: true
+- `cca_time0`: 2, `cca_time1`: 2 (CCA conv kernel sizes)
+- `mamba_cache_dtype`: float32 (misnamed — applies to CCA conv state, not an SSM)
+- `residual_in_fp32`: true, `scale_residual_merge`: true
+- `tie_word_embeddings`: true (lm_head weight = embed_tokens weight)
+- `normalization`: RMSNorm, `activation_func`: swiglu
 
-Six novel components require ports, in dependency order:
+**Layer schedule:** strictly 1:1 alternating, starting with attention. Layer 0=ATT, 1=MoE, 2=ATT, …, 78=ATT, 79=MoE. So 40 ATT layers + 40 MoE layers. `modular_zaya.py:1663-1681` is the source of truth.
 
-1. **`ZayaRMSNorm`** — verify whether structurally identical to standard RMSNorm or has differing semantics.
-2. **Partial RoPE** — apply `mlx.core.fast.rope` to the first 50% of head dim, concat the unrotated half. mlx-lm has no built-in for this.
-3. **`ZayaAttention`** — GQA (16 Q / 2 KV), partial RoPE, integrates with mlx-lm's KV cache classes.
-4. **`ZayaSSM`** — custom Mamba-variant recurrent scan. State kept in fp32 even when activations are bf16. Highest implementation risk.
-5. **MoE stack** — `ZayaRouter` (linear + softmax + top-1) feeding `ZayaMoE` (16 experts + optional skip expert when MoD active).
-6. **EDA path** — `ZayaRMSNorm`-normalized depth-averaged hidden state, fires from the second eligible layer onward.
+**Components requiring port (dependency order):**
 
-Plus `scale_residual_merge` (a residual scaling factor applied at merge — exact formula to be read from PyTorch source).
+1. **Partial RoPE** — mlx-lm has no built-in. Apply RoPE to the first 64 of 128 head dims, pass the rest through unchanged.
+2. **CCA (Compressed Causal Attention)** — the most novel piece. For even layers. Two-stage depthwise 1D causal conv (kernel 2 each) on concatenated [Q, K] along sequence; per-head L2 norm with learnable per-KV-head temperature; two-stream V (current hidden state + one-step-back hidden state). Compresses to 8 effective Q heads.
+3. **ZayaAttention** — wraps CCA + standard scaled dot product attention with GQA (8 Q heads, 2 KV heads, group_size=4) and partial RoPE.
+4. **ResidualScaling** — per-feature affine `(stream + bias) * scale` on both residual and hidden_states streams before merging. First layer skips the residual transform.
+5. **ZayaDecoderATTLayer** — composes ResidualScaling + residual merge + RMSNorm + ZayaAttention, with the residual stream threaded through (separate from hidden_states).
+6. **ZayaRouter** — for odd layers. Linear down-projection (2048→256) + optional EDA gate (`hs += prev_router_states * learnable_scale`, gated off for first MoE layer) + RMSNorm + 3-layer GELU MLP (D→D→D→17) + softmax + top-1 selection biased by `balancing_biases` (load balancing).
+7. **MLP / SequentialMLP** — single SwiGLU expert; container of 16 experts.
+8. **ZayaBlock** — sorts tokens by chosen expert, runs experts, MoD-skip-expert branch (skip = pass through unchanged), un-permutes, gates by route_prob.
+9. **ZayaDecoderMLPLayer** — composes ResidualScaling + residual merge + RMSNorm + ZayaBlock.
+10. **ZayaModel** — embedding + 80 alternating decoder layers + final ResidualScaling + final RMSNorm.
+11. **ZayaForCausalLM** — adds lm_head with weight tied to embed_tokens.
 
-**Open architectural facts to confirm during implementation:**
+Components that **do not** require custom code (use mlx-lm built-ins):
 
-- Layer schedule — are SSM and attention layers interleaved (Jamba-style), or every layer hybrid? Read from `modeling_zaya.py` config or layer-construction logic.
-- MoE coverage — every layer or a subset?
-- `ZayaRMSNorm` semantics — exact difference from stock RMSNorm, if any.
-- `scale_residual_merge` formula.
-- EDA exact form (depth-averaging window, weighting).
+- **RMSNorm** — `ZayaRMSNorm` is identical to standard T5/Llama RMSNorm. Drop-in `nn.RMSNorm`.
+- **RoPE base** — `ZayaRotaryEmbedding` is identical to `Glm4RotaryEmbedding` (standard RoPE). The "partial" part is a slice/concat wrapper around mlx-lm `nn.RoPE`.
+- **Causal mask** — vanilla copies from Phi3/Mistral. mlx-lm's standard mask creation suffices.
+- **SwiGLU** — standard.
 
-These are facts to extract from source code, not design choices.
+**Components NOT in the architecture** (corrections to R0 spec):
+
+- ❌ No SSM, no Mamba scan, no recurrent state-space layers.
+- ❌ EDA is not on main hidden states. EDA is on the router's 256-dim hidden states, threaded through MoE layers only.
+- ❌ EDA is not exponential averaging. It is a learnable per-feature affine combination.
 
 ## 6. Repo Structure
 
@@ -180,41 +190,45 @@ Never load PyTorch and MLX in the same process. Reference dumps are the sole int
 
 If `Zyphra/transformers @ zaya1` does not build cleanly on macOS (likely failure modes: triton dependency, CUDA-only kernels gated behind `torch.cuda.is_available()` checks), reference dumps run on a one-off Linux GPU instance (Modal or Vast.ai for a few hours). Dumps are write-once-read-many, so this is acceptable.
 
-## 8. Implementation Phases
+## 8. Implementation Phases (R1 — restructured after source read)
 
 Each phase has a single correctness gate. We do not advance until the gate passes.
 
 | Phase | Work | Gate |
 |---|---|---|
-| 0 | Reference scaffolding: venv, weights download, `dump_activations.py` | PyTorch produces output, `.npy` files on disk, manifest written |
-| 1 | `ModelArgs` + empty `Model` shell + `sanitize(weights)` | All 4 safetensors shards load, every weight finds a home, no leftovers |
-| 2 | `ZayaRMSNorm` + `partial_rope` | Per-tensor parity vs reference, < 1e-4 max abs diff |
-| 3 | `ZayaAttention` end-to-end + KV cache | Parity at L0, L40, L79 |
-| 4 | `ZayaSSM` (custom recurrent scan) | Parity at L0 (or earliest SSM layer), L40, L79 |
-| 5 | `ZayaRouter` + `ZayaMoE` (with skip expert + EDA) | Parity at L1 (first EDA-eligible), L40, L79 |
-| 6 | Full forward: 80 stacked layers + embedding + lm_head | Top-5 logit ranking matches PyTorch; greedy next-token matches |
-| 7 | `mlx_lm.generate` integration | Coherent output on model-card example prompts; tokens/sec measured |
-| 8 | 4-bit conversion via `mlx_lm.convert` | Perplexity within 3% of BF16 on ~1000 tokens of held-out text |
-| 9 | HF upload + Zyphra issue/PR | `mlx_lm.load("mlx-community/ZAYA1-8B-4bit")` works from a fresh shell |
+| 0 | Reference scaffolding: venv, weights download, source read, `dump_activations.py` | PyTorch produces output, `.npy` files on disk, manifest + architecture doc written |
+| 1 | `ModelArgs` + empty `Model` shell in mlx-lm fork + `sanitize(weights)` | All 4 safetensors shards load, every weight finds a home, no leftovers; `tie_word_embeddings` handled |
+| 2 | Partial RoPE wrapper around mlx-lm's `nn.RoPE` | Per-tensor parity vs reference Q/K-after-RoPE, < 1e-4 max abs diff |
+| 3 | **CCA** (depthwise conv + time-shift V₂ + L2 norm + per-head temp) | Parity on `qkv_q_out`, `qkv_k_out`, `qkv_v_out` at L0, L40, L78 (all even layers) |
+| 4 | `ZayaAttention` (CCA + standard SDPA + GQA + partial RoPE + KV cache) | Parity on `self_attn_out` at L0, L40, L78 |
+| 5 | `ResidualScaling` + `ZayaDecoderATTLayer` | Parity on full ATT layer output at L0, L40, L78 |
+| 6 | `ZayaRouter` (with EDA + balancing biases) + `MLP` + `SequentialMLP` + `ZayaBlock` (with MoD skip-expert) | Parity on `router_out`, `zaya_block_out` at L1, L41, L79 |
+| 7 | `ZayaDecoderMLPLayer` | Parity on full MoE layer output at L1, L41, L79 |
+| 8 | `ZayaModel` forward (80-layer alternation + residual+router_hs threading + final norm) | Parity on `final_norm_out` |
+| 9 | `ZayaForCausalLM` (lm_head, tied weights) + end-to-end logits | Top-5 logit ranking matches PyTorch; greedy next-token matches |
+| 10 | `mlx_lm.generate` integration | Coherent output on model-card example prompts; tokens/sec measured on M3 Max |
+| 11 | 4-bit conversion via `mlx_lm.convert` | Perplexity within 3% of BF16 on ~1000 tokens of held-out text |
+| 12 | HF upload + Zyphra issue/PR | `mlx_lm.load("mlx-community/ZAYA1-8B-4bit")` works from a fresh shell |
 
 Each phase commits to its own feature branch. Bugs found in earlier phases force re-validation of those phases.
 
 **Stop conditions:**
 
-- Phase 4 cannot reach SSM parity within ~3 dedicated work sessions (a session ≈ 2–3 focused hours) → stop, escalate (Zyphra issue/discord), do not push wrong-output gibberish forward.
-- Phase 8 4-bit perplexity regresses beyond 3% → keep router and EDA in higher precision, retry; if still failing, ship BF16 only and document the quant gap.
+- Phase 3 cannot reach CCA parity within ~3 dedicated work sessions (a session ≈ 2–3 focused hours) → stop, escalate. CCA replaces SSM as the highest-uncertainty piece because of its custom depthwise-grouped conv pattern and per-head L2 normalization.
+- Phase 11 4-bit perplexity regresses beyond 3% → keep router and CCA temperature/conv weights in higher precision, retry; if still failing, ship BF16 only and document the quant gap.
 
-## 9. Risks
+## 9. Risks (R1 — updated after source read)
 
 | ID | Risk | Likelihood × Impact | Mitigation |
 |---|---|---|---|
-| R1 | Custom SSM cannot reach parity | High × High | Dump SSM internals separately (input proj, dt, state, output proj), not just layer output, to localize bugs. Hard stop at 3 sessions. |
-| R2 | Zyphra transformers fork doesn't build on macOS | Medium × High | Try CPU-only torch first; fall back to one-off Linux GPU instance for reference dumps |
-| R3 | RAM pressure under simultaneous PyTorch + MLX | Medium × Medium | Already mitigated by offline-dump workflow |
-| R4 | `mlx_lm.convert` mishandles MoE/SSM weights | Medium × Medium | Study `mlx_lm/models/jamba.py` (similar hybrid). Add custom quant-skip predicate for router and SSM A/B params if needed |
-| R5 | HF safetensors → MLX weight key mismatches | Low × Medium | `sanitize` logs every unmapped key; never silently drop weights |
-| R6 | `mlx-community` HF org membership unknown | Low × Low | Check at start of Phase 9; fall back to personal namespace, request access in parallel |
-| R7 | 4-bit quant disproportionately damages MoD/EDA | Low × Medium (unknown) | Phase 8 gate already covers; mitigation built into stop conditions |
+| R1 | ~~Custom SSM cannot reach parity~~ | ELIMINATED | No SSM exists in ZAYA1. CCA replaces it as the most novel component but is straightforward (no recurrent scan). |
+| R1' | CCA depthwise conv with custom groups doesn't match PyTorch numerically | Medium × Medium | Dump CCA submodule outputs at fine granularity (linear_q/k, val_proj1/2, conv_qk[0], conv_qk[1], post-L2-norm Q/K). Test MLX `nn.Conv1d(groups=...)` against reference for a small synthetic input before integration. |
+| R2 | Zyphra transformers fork doesn't build on macOS | RESOLVED | Built on first try on M3 Max. |
+| R3 | RAM pressure under simultaneous PyTorch + MLX | Medium × Medium | Mitigated by offline-dump workflow |
+| R4 | `mlx_lm.convert` mishandles MoE / depthwise conv weights | Medium × Medium | Study `mlx_lm/models/jamba.py` for MoE quantization patterns. Verify quant works correctly on CCA's depthwise convs by spot-checking weights post-quant. Add custom quant-skip predicate for router_mlp's GELU layers if needed. |
+| R5 | HF safetensors → MLX weight key mismatches | Low × Medium | `sanitize` logs every unmapped key; tied lm_head weight handled explicitly (don't load it; alias from embed_tokens). |
+| R6 | `mlx-community` HF org membership unknown | Low × Low | Check at start of Phase 12; fall back to personal namespace, request access in parallel |
+| R7 | 4-bit quant disproportionately damages router / EDA | Low × Medium (unknown) | Phase 11 gate covers; mitigation built into stop conditions |
 | R8 | Zyphra doesn't notice the work | Low × High (strategic) | Issue + PR linking back, HF model card credits Zyphra, mlx-community visibility, optional follow-up writeup |
 
 ## 10. Success Criteria
