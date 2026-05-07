@@ -4,40 +4,47 @@
 
 ## Current phase
 
-**Phase 0 — COMPLETE.** Phase 1 (skeleton + weight loading in mlx-lm fork) not yet started.
+**Phase 1 — COMPLETE.** Phase 2 (partial RoPE wrapper) not yet started.
 
 ## What's done
 
 Phase 0 (reference scaffolding):
-- Reference uv venv set up at `reference/.venv` with `torch==2.5.1` (CPU) + `transformers==4.57.1` from `Zyphra/transformers @ zaya1` (commit `f0ab5bef`)
-- ZAYA1-8B weights downloaded (`~/.cache/huggingface/hub/models--Zyphra--ZAYA1-8B/`, 16 GB)
-- Source code read end-to-end (`modular_zaya.py` 2,316 LOC + `configuration_zaya.py` 126 LOC)
-- Architecture cataloged at [`reference/notes/zaya-architecture.md`](reference/notes/zaya-architecture.md)
+- Reference uv venv at `reference/.venv` with `torch==2.5.1` (CPU) + `transformers==4.57.1` from `Zyphra/transformers @ zaya1` (commit `f0ab5bef`)
+- ZAYA1-8B weights downloaded (16 GB)
+- Source code read end-to-end; architecture cataloged at [`reference/notes/zaya-architecture.md`](reference/notes/zaya-architecture.md)
 - All 5 open architectural questions from spec §5 resolved
 - Spec amended (R1): no SSM in ZAYA1; CCA replaces it; layer schedule is 1:1 ATT/MoE alternation
-- `reference/dump_activations.py` implemented + 5 pytest tests passing
-- 3 reference dumps captured with 3,046 tensors each:
-  - `smoke` (7 input tokens) — 57 MB
-  - `reasoning_short` (22 tokens) — 158 MB
-  - `long_context_seed` (78 tokens) — 531 MB
-- `reference/MANIFEST.md` indexes available dumps
-- Repo public at https://github.com/zappleg8/zaya1-mlx
+- `dump_activations.py` + 5/5 tests passing
+- 3 reference dumps captured (smoke, reasoning_short, long_context_seed; 3,046 tensors each; 746 MB total)
+
+Phase 1 (skeleton + weight loading):
+- HF weight key inventory documented at [`reference/notes/hf-weight-keys.md`](reference/notes/hf-weight-keys.md): 28 unique key patterns, 2,483 total tensors verified to match index exactly
+- mlx-lm conventions documented at [`reference/notes/mlx-lm-conventions.md`](reference/notes/mlx-lm-conventions.md)
+- Validation venv at `validation/.venv` with MLX 0.31.2 + editable `~/code/personal/mlx-lm`
+- Skeleton file [`~/code/personal/mlx-lm/mlx_lm/models/zaya.py`](../mlx-lm/mlx_lm/models/zaya.py): ModelArgs + 12 module classes mirroring ZayaForCausalLM
+- All 2,483 HF safetensors load via `mlx_lm.load("Zyphra/ZAYA1-8B")` with strict=True
+- Param count: **8,840,489,464** (exact match with HF total bf16 / 2)
+- 8/8 weight-loading tests pass
+- mlx-lm fork pushed to https://github.com/zappleg8/mlx-lm on branch `zaya1`
 
 ## Headline finding from Phase 0
 
-**The architecture is not a Mamba+Attention hybrid.** What was thought to be SSM is **CCA** (Compressed Causal Attention) — a custom attention variant with a depthwise 1D causal conv on Q+K and a time-shifted V stream. R1 (custom SSM parity unreachable, originally the highest risk) is eliminated. The new highest-uncertainty piece is CCA itself (R1' in the amended risk register).
+**The architecture is not a Mamba+Attention hybrid.** What was thought to be SSM is **CCA** (Compressed Causal Attention) — a custom attention variant with a depthwise 1D causal conv on Q+K and a time-shifted V stream. R1 (custom SSM parity unreachable) is eliminated.
+
+## Phase 1 wrinkles found and resolved
+
+- MLX `nn.Sequential` exposes children as `.layers.0.weight`; HF safetensors store `.0.weight`. Resolved in `sanitize` via regex insertion of `.layers` into `conv_qk` and `router_mlp` paths.
+- PyTorch Conv1d weight layout `(out, in/groups, kernel)` differs from MLX `(out, kernel, in/groups)`. Resolved in `sanitize` via `v.transpose(0, 2, 1)` on `conv_qk` weights.
+- mlx-lm uses `importlib.import_module(f"mlx_lm.models.{model_type}")` for dispatch. No registry edit needed; just create `zaya.py` in the right place.
 
 ## What's next
 
-**Phase 1: skeleton + weight loading in mlx-lm fork.** Plan to be written. Key tasks:
+**Phase 2: partial RoPE wrapper.** Plan to be written. Key tasks:
 
-1. Define `ModelArgs` dataclass mirroring `ZayaConfig` (in `~/code/personal/mlx-lm/mlx_lm/models/zaya.py`).
-2. Stub the full module hierarchy with correct shapes but no forward logic.
-3. Write `sanitize(weights)` that maps HF safetensors keys → MLX nn names.
-4. Verify all 4 safetensors shards load with strict=True; every weight finds a home; no leftovers.
-5. Special-case `tie_word_embeddings`: don't load `lm_head.weight` separately; alias from `embed_tokens.weight`.
+1. Implement `partial_rope` helper that applies `mlx-lm`'s RoPE primitive to the first `head_dim × partial_rotary_factor = 64` features of Q/K, passing the remaining 64 features through unchanged.
+2. Test: load reference activations for `self_attn_qkv_q_out` (post-RoPE Q) and verify per-tensor parity vs MLX implementation, max abs diff < 1e-3 cosine sim > 0.999.
 
-Gate for Phase 1: `weights = mx.load(...); model.load_weights(weights, strict=True)` succeeds.
+The MLX skeleton's stub `__call__` will need to be partially implemented for Phase 2 — at minimum, embedding + first ATT layer's Q/K projection + partial RoPE.
 
 ## Blockers
 
@@ -47,6 +54,8 @@ None.
 
 - Index: [`reference/MANIFEST.md`](reference/MANIFEST.md)
 - Architecture catalog + shape inventory: [`reference/notes/zaya-architecture.md`](reference/notes/zaya-architecture.md)
+- HF weight key inventory: [`reference/notes/hf-weight-keys.md`](reference/notes/hf-weight-keys.md)
+- mlx-lm conventions: [`reference/notes/mlx-lm-conventions.md`](reference/notes/mlx-lm-conventions.md)
 - Install log: [`reference/notes/install-log.md`](reference/notes/install-log.md)
 - Dumps: `reference/activations/{smoke,reasoning_short,long_context_seed}/` (gitignored)
 
@@ -54,11 +63,10 @@ None.
 
 - Design (R1): [`docs/superpowers/specs/2026-05-06-zaya1-mlx-port-design.md`](docs/superpowers/specs/2026-05-06-zaya1-mlx-port-design.md)
 - Phase 0 plan: [`docs/superpowers/plans/2026-05-06-phase0-reference-scaffolding.md`](docs/superpowers/plans/2026-05-06-phase0-reference-scaffolding.md)
-- Phase 1+ plans: not yet written. Plan 2 will follow Phase 0 sign-off.
+- Phase 1 plan: [`docs/superpowers/plans/2026-05-06-phase1-skeleton-and-weight-loading.md`](docs/superpowers/plans/2026-05-06-phase1-skeleton-and-weight-loading.md)
+- Phase 2+ plans: not yet written. Plan 3 will follow Phase 1 sign-off.
 
-## mlx-lm fork
+## Repos
 
-- Path: `~/code/personal/mlx-lm`
-- Origin: `https://github.com/zappleg8/mlx-lm`
-- Active branch: `zaya1` (clean; no model code yet)
-- Bootstrap notes: [`mlx-lm/CLAUDE.md`](../mlx-lm/CLAUDE.md)
+- **zaya1-mlx** (this repo): https://github.com/zappleg8/zaya1-mlx (public, main branch)
+- **mlx-lm fork**: https://github.com/zappleg8/mlx-lm (zaya1 branch, ready for upstream PR)
