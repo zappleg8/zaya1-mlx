@@ -1,0 +1,22 @@
+{
+  "prompts": [
+    {
+      "id": "smoke",
+      "text": "The capital of France is",
+      "max_new_tokens": 4,
+      "purpose": "smoke test: short, deterministic, easy to eyeball. ~6 tokens input."
+    },
+    {
+      "id": "reasoning_short",
+      "text": "<think>If x + 3 = 7, what is x? Solve step by step.</think>",
+      "max_new_tokens": 16,
+      "purpose": "exercises the Qwen3-style reasoning token path. ~22 tokens input."
+    },
+    {
+      "id": "long_context_seed",
+      "text": "Once upon a time, in a kingdom far away, there lived a young scholar who dreamed of mastering the art of state-space models. Every day, she would walk to the library and read about recurrence, scans, and the dance between hidden states. She loved the elegance of attention mechanisms, the simplicity of linear projections, and the way information flowed through the network of neurons.",
+      "max_new_tokens": 1,
+      "purpose": "32+ token input to exercise position-dependent paths (RoPE, KV cache, CCA conv along sequence). Single output token to keep dump size manageable."
+    }
+  ]
+}

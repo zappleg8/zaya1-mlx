@@ -432,41 +432,17 @@ Write `reference/prompts.json`:
 }
 ```
 
-- [ ] **Step 2: Append hook taxonomy to architecture doc**
+- [ ] **Step 2: Hook taxonomy is in the architecture doc**
 
-In `reference/notes/zaya-architecture.md`, append a section listing every submodule we will hook. Base this on the class catalog from Task 5. Format:
+The original speculative taxonomy in this plan was based on a wrong architecture model (Mamba SSM, every-layer MoE). After Task 5's source read, the **canonical hook taxonomy is now in `reference/notes/zaya-architecture.md` § "Submodules to hook in dump_activations.py"** and reflects:
 
-```markdown
-## Hook taxonomy
+- Strict ATT/MoE alternation (no SSM).
+- Different hook sets for even (ATT) vs odd (MoE) layers.
+- CCA-specific submodule keys (linear_q, linear_k, val_proj1, val_proj2, conv_qk[0], conv_qk[1]) instead of SSM keys.
+- Router-internal keys (down_proj, rmsnorm_eda, router_mlp[0/2/4]).
+- Per-expert keys (only the chosen expert produces output for any given token under top-1 routing).
 
-Every named submodule below gets a forward-hook. Outputs are saved as `L{layer_idx}_{module_key}.npy`.
-
-| module_key | Description | Expected dtype |
-|---|---|---|
-| input_norm_out | Output of pre-attention RMSNorm | bf16 |
-| attn_q_proj_out | Output of Q projection | bf16 |
-| attn_k_proj_out | Output of K projection | bf16 |
-| attn_v_proj_out | Output of V projection | bf16 |
-| attn_q_rope_out | Q after partial RoPE | bf16 |
-| attn_k_rope_out | K after partial RoPE | bf16 |
-| attn_out | Attention block output (post o_proj) | bf16 |
-| post_attn_residual | Residual after attention add | fp32 (residual_in_fp32) |
-| ssm_in_proj_out | SSM input projection | bf16 |
-| ssm_dt | SSM Δt parameter | fp32 |
-| ssm_state_out | SSM state at end of scan | fp32 (mamba_cache_dtype) |
-| ssm_out | SSM output (post output projection) | bf16 |
-| post_ssm_residual | Residual after SSM add | fp32 |
-| moe_router_logits | Pre-softmax router logits | bf16 |
-| moe_router_topk | Top-1 expert index per token | int |
-| moe_expert_outputs | Stacked expert outputs (topk-aware) | bf16 |
-| moe_skip_mask | (if zaya_use_mod) bool mask of tokens routed to skip expert | bool |
-| moe_out | MoE block output | bf16 |
-| eda_in | EDA input (pre-norm) | fp32 |
-| eda_out | EDA output (post-norm) | bf16 |
-| post_moe_residual | Residual after MoE+EDA merge | fp32 |
-```
-
-This is a starting taxonomy — adjust based on Task 5's actual class catalog. Some keys may not apply to every layer (e.g. SSM keys only on SSM layers). The hook code in Task 7 must handle that gracefully.
+Implementation in Task 7 walks every named submodule and dumps its output, so the taxonomy is more documentation than configuration — the dump will produce one .npy per submodule whether it appears in the table or not. The table tells future readers what each key means.
 
 - [ ] **Step 3: Commit**
 
