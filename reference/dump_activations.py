@@ -66,14 +66,16 @@ def _save_output(captured: Dict[str, np.ndarray], key_base: str, output) -> None
     if isinstance(output, torch.Tensor):
         captured[f"{key_base}_out"] = _to_numpy(output)
     elif isinstance(output, (tuple, list)):
-        # For CCA, the output is (Q, K, V); save each.
-        # For other cases (attention returning (out, weights, past_kv)), only the first is the "output".
-        # Heuristic: if all 3 leading items are tensors of the same dtype, treat as (Q,K,V) triplet.
         tensors = [x for x in output if isinstance(x, torch.Tensor)]
+        # 3-tuple of same-dtype tensors → CCA-style (Q, K, V)
         if len(tensors) == 3 and tensors[0].dtype == tensors[1].dtype == tensors[2].dtype:
             captured[f"{key_base}_q"] = _to_numpy(tensors[0])
             captured[f"{key_base}_k"] = _to_numpy(tensors[1])
             captured[f"{key_base}_v"] = _to_numpy(tensors[2])
+        # 2-tuple of same-dtype tensors → e.g. rotary embedding (cos, sin)
+        elif len(tensors) == 2 and tensors[0].dtype == tensors[1].dtype:
+            captured[f"{key_base}_0"] = _to_numpy(tensors[0])
+            captured[f"{key_base}_1"] = _to_numpy(tensors[1])
         elif len(tensors) > 0:
             captured[f"{key_base}_out"] = _to_numpy(tensors[0])
     elif hasattr(output, "last_hidden_state") and isinstance(
