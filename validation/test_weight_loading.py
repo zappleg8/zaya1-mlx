@@ -27,14 +27,6 @@ def _count_params(model: nn.Module) -> int:
     return total
 
 
-@pytest.fixture(scope="session")
-def loaded_model():
-    from mlx_lm import load
-
-    model, _tokenizer = load("Zyphra/ZAYA1-8B")
-    return model
-
-
 def test_model_type_is_zaya(loaded_model):
     assert loaded_model.model_type == "zaya"
 

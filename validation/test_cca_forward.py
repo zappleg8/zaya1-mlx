@@ -29,14 +29,6 @@ CCA_TOL_K = 3e-1
 CCA_TOL_V = 1e-2
 
 
-@pytest.fixture(scope="session")
-def loaded_model():
-    from mlx_lm import load
-
-    model, _tokenizer = load("Zyphra/ZAYA1-8B")
-    return model
-
-
 def _load_npy(name: str) -> mx.array:
     path = REFERENCE_DIR / name
     if not path.exists():

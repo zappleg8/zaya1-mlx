@@ -21,14 +21,6 @@ REFERENCE_DIR = Path(__file__).parent.parent / "reference" / "activations" / "sm
 ATT_OUT_TOL = 5e-1
 
 
-@pytest.fixture(scope="session")
-def loaded_model():
-    from mlx_lm import load
-
-    model, _tokenizer = load("Zyphra/ZAYA1-8B")
-    return model
-
-
 def _load_npy(name: str) -> mx.array:
     path = REFERENCE_DIR / name
     if not path.exists():
