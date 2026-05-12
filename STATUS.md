@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phase 4 — COMPLETE.** Phase 5 (ResidualScaling + ZayaDecoderATTLayer forward — full ATT decoder layer including residual stream) not yet started.
+**Phase 5 — COMPLETE.** Phase 6 (MoE forward — `ZayaRouter` + `MLP` + `SequentialMLP` + `ZayaBlock` with skip-expert MoD) not yet started.
 
 ## What's done
 
@@ -32,6 +32,12 @@ Phase 2 (partial RoPE):
 - 3/3 partial RoPE parity tests pass: synthetic input, dumped cos/sin reproducibility, dumped Q with reference cos/sin
 - Confirmed: mlx-lm's built-in `nn.RoPE(dims=64, base=5e6, traditional=False)` correctly implements Zaya's partial RoPE within bf16 rounding noise — no custom helper needed
 - `nn.RoPE` added to `ZayaAttention` skeleton (Phase 4 will use it)
+
+Phase 5 (ATT decoder layer):
+- `ZayaDecoderATTLayer.__call__` composes ResidualScaling + residual init/merge + input_norm (with dtype cast to/from fp32) + ZayaAttention. Returns `(hidden_states,), residual, prev_router_hidden_states`.
+- 4/4 layer tests pass: end-to-end L0 hidden_states output vs `L0_self_attn_out`; L0 residual output vs `L0_layer_out` (which the dump captures as the residual, not hidden_states, due to the layer returning a 3-tuple); residual fp32 dtype check; non-first-layer synthetic residual+merge path.
+- Validation suite at 21/21.
+- Discovered the dump's `L{i}_layer_out` semantics: it's the residual stream (fp32), not the layer's hidden_states output. Documented in the test.
 
 Phase 4 (ZayaAttention forward):
 - `ZayaAttention.__call__` composes CCA(qkv) → reshape to (B, n_heads, S, D) → partial RoPE → mlx-lm `scaled_dot_product_attention` (handles GQA automatically) → o_proj
@@ -61,9 +67,9 @@ PyTorch stores cos/sin as bf16 in the model. MLX computes them in fp32 internall
 
 ## What's next
 
-**Phase 5: ResidualScaling + ZayaDecoderATTLayer forward.** Composes already-validated pieces (ResidualScaling skeleton from Phase 1 + ZayaAttention forward from Phase 4) into the full ATT decoder layer that handles the residual stream threading. Plan to be written.
+**Phase 6: MoE forward** (`ZayaRouter` with EDA + 16 experts via `SequentialMLP` + `ZayaBlock` with MoD skip-expert routing). The router has been the most architecturally interesting piece — top-1 expert selection with load-balancing biases and a learnable "skip" 17th option that lets tokens bypass the MLP entirely.
 
-Gate: parity on `L{i}_layer_out` reference tensors at L0, L40, L78 (within bf16 noise).
+Gate: parity on `L1_zaya_block_router_*` and `L1_zaya_block_out` reference tensors at the first MoE layer (L1, no EDA) and a later MoE layer (L3, with EDA).
 
 ## Blockers
 
@@ -86,7 +92,8 @@ None.
 - Phase 2 plan: [`docs/superpowers/plans/2026-05-06-phase2-partial-rope.md`](docs/superpowers/plans/2026-05-06-phase2-partial-rope.md)
 - Phase 3 plan: [`docs/superpowers/plans/2026-05-06-phase3-cca-forward.md`](docs/superpowers/plans/2026-05-06-phase3-cca-forward.md)
 - Phase 4 plan: [`docs/superpowers/plans/2026-05-06-phase4-zaya-attention-forward.md`](docs/superpowers/plans/2026-05-06-phase4-zaya-attention-forward.md)
-- Phase 5+ plans: not yet written.
+- Phase 5 plan: [`docs/superpowers/plans/2026-05-06-phase5-att-decoder-layer.md`](docs/superpowers/plans/2026-05-06-phase5-att-decoder-layer.md)
+- Phase 6+ plans: not yet written.
 
 ## Repos
 
