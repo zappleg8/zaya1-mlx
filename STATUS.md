@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phase 3 — COMPLETE.** Phase 4 (ZayaAttention forward — CCA + standard SDPA + GQA + KV cache) not yet started.
+**Phase 4 — COMPLETE.** Phase 5 (ResidualScaling + ZayaDecoderATTLayer forward — full ATT decoder layer including residual stream) not yet started.
 
 ## What's done
 
@@ -33,6 +33,17 @@ Phase 2 (partial RoPE):
 - Confirmed: mlx-lm's built-in `nn.RoPE(dims=64, base=5e6, traditional=False)` correctly implements Zaya's partial RoPE within bf16 rounding noise — no custom helper needed
 - `nn.RoPE` added to `ZayaAttention` skeleton (Phase 4 will use it)
 
+Phase 4 (ZayaAttention forward):
+- `ZayaAttention.__call__` composes CCA(qkv) → reshape to (B, n_heads, S, D) → partial RoPE → mlx-lm `scaled_dot_product_attention` (handles GQA automatically) → o_proj
+- 3/3 attention forward parity tests pass at L0, L40, L78 within bf16 noise floor (max diffs: 0.34, 0.09, 0.16 vs tolerance 0.5)
+- Validation suite at 17/17
+
+Infrastructure fix:
+- Discovered & fixed an OOM footgun: each validation test file had its own `@pytest.fixture(scope="session")` for `loaded_model`. pytest treats same-name fixtures in different files as independent — so the full suite loaded the 17 GB model 3-4 times. Consolidated to `validation/conftest.py` so the model loads exactly once per invocation. Full suite now runs in 6.3 s with no memory issues.
+
+HF config update handling:
+- Zyphra updated config.json on 2026-05-11: `num_attention_heads` 16→8 (now reflects effective Q heads), `cca_num_q_heads` removed, explicit `head_dim` added. Weights bit-identical. ModelArgs updated to handle both old and new schemas (uses `__post_init__` for resolution).
+
 Phase 3 (CCA forward):
 - `CCA.__call__` implemented in HF `(B, S, H)` layout: linear_q/k projections, pre-conv mean residual, two-stage depthwise/grouped Conv1d on packed [Q, K], two-stream V (current + time-shifted), per-head L2-normalized Q/K with learnable temperature
 - 3/3 CCA forward parity tests pass at L0, L40, L78 within bf16 noise floor
@@ -50,9 +61,9 @@ PyTorch stores cos/sin as bf16 in the model. MLX computes them in fp32 internall
 
 ## What's next
 
-**Phase 4: ZayaAttention forward** (full attention block: CCA outputs Q/K/V → reshape into multi-head layout → apply RoPE → KV cache update → GQA repeat → standard SDPA → o_proj). Plan to be written.
+**Phase 5: ResidualScaling + ZayaDecoderATTLayer forward.** Composes already-validated pieces (ResidualScaling skeleton from Phase 1 + ZayaAttention forward from Phase 4) into the full ATT decoder layer that handles the residual stream threading. Plan to be written.
 
-Gate: parity on `self_attn_out` reference tensors at L0, L40, L78 (within bf16 noise).
+Gate: parity on `L{i}_layer_out` reference tensors at L0, L40, L78 (within bf16 noise).
 
 ## Blockers
 
@@ -74,7 +85,8 @@ None.
 - Phase 1 plan: [`docs/superpowers/plans/2026-05-06-phase1-skeleton-and-weight-loading.md`](docs/superpowers/plans/2026-05-06-phase1-skeleton-and-weight-loading.md)
 - Phase 2 plan: [`docs/superpowers/plans/2026-05-06-phase2-partial-rope.md`](docs/superpowers/plans/2026-05-06-phase2-partial-rope.md)
 - Phase 3 plan: [`docs/superpowers/plans/2026-05-06-phase3-cca-forward.md`](docs/superpowers/plans/2026-05-06-phase3-cca-forward.md)
-- Phase 4+ plans: not yet written.
+- Phase 4 plan: [`docs/superpowers/plans/2026-05-06-phase4-zaya-attention-forward.md`](docs/superpowers/plans/2026-05-06-phase4-zaya-attention-forward.md)
+- Phase 5+ plans: not yet written.
 
 ## Repos
 
