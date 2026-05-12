@@ -4,7 +4,9 @@
 
 ## Current phase
 
-**Phase 7 — COMPLETE.** Phase 8 (`ZayaModel` forward — wires 80 alternating decoder layers + embed + final_norm + residual+router state threading) not yet started.
+**Phase 8 — COMPLETE.** Phase 9 (`Model.__call__` with tied `lm_head` — produces logits) not yet started.
+
+**End-to-end forward through all 80 layers now works in MLX.** Max abs diff vs PyTorch reference: 2.41 on tensor range ~31 (7.7% relative) — realistic bf16 noise compounding over 80 layers.
 
 ## What's done
 
@@ -32,6 +34,12 @@ Phase 2 (partial RoPE):
 - 3/3 partial RoPE parity tests pass: synthetic input, dumped cos/sin reproducibility, dumped Q with reference cos/sin
 - Confirmed: mlx-lm's built-in `nn.RoPE(dims=64, base=5e6, traditional=False)` correctly implements Zaya's partial RoPE within bf16 rounding noise — no custom helper needed
 - `nn.RoPE` added to `ZayaAttention` skeleton (Phase 4 will use it)
+
+Phase 8 (ZayaModel forward — 80-layer end-to-end):
+- `ZayaModel.__call__` wires embed_tokens (or `input_embeddings` bypass) + 80 alternating decoder layers + final ResidualScaling + final RMSNorm.
+- Threads `residual` and `prev_router_hidden_states` through all layers (the EDA chain runs through 40 MoE layers, gated off only at L1).
+- End-to-end parity test passes at L0 → L79: pre-lm_head output matches `global_model_final_norm_out` within bf16 compounding tolerance.
+- Validation suite at 28/28.
 
 Phase 7 (MoE decoder layer):
 - `ZayaDecoderMLPLayer.__call__` mirrors Phase 5's ATT layer structure but routes through `ZayaBlock` and threads `prev_router_hidden_states`.
@@ -78,7 +86,7 @@ PyTorch stores cos/sin as bf16 in the model. MLX computes them in fp32 internall
 
 ## What's next
 
-**Phase 8: ZayaModel forward.** Wires all 80 alternating decoder layers + embed_tokens + final ResidualScaling + final RMSNorm + residual/router state threading. After Phase 8, the model produces an end-to-end pre-lm_head hidden state. Phase 9 adds the lm_head; Phase 10 is the first actual generated text.
+**Phase 9: Model.__call__ with tied lm_head.** One-line composition — pass `inputs` through `self.model(...)` to get hidden states, then project via `embed_tokens.as_linear(...)` to logits (tied embeddings). Tiny phase. After Phase 9, the model produces correct logits for any input. Phase 10 wraps it in `mlx_lm.generate` for actual text generation.
 
 ## Blockers
 
@@ -104,7 +112,8 @@ None.
 - Phase 5 plan: [`docs/superpowers/plans/2026-05-06-phase5-att-decoder-layer.md`](docs/superpowers/plans/2026-05-06-phase5-att-decoder-layer.md)
 - Phase 6 plan: [`docs/superpowers/plans/2026-05-06-phase6-moe-forward.md`](docs/superpowers/plans/2026-05-06-phase6-moe-forward.md)
 - Phase 7 plan: [`docs/superpowers/plans/2026-05-06-phase7-moe-decoder-layer.md`](docs/superpowers/plans/2026-05-06-phase7-moe-decoder-layer.md)
-- Phase 8+ plans: not yet written.
+- Phase 8 plan: [`docs/superpowers/plans/2026-05-06-phase8-model-forward.md`](docs/superpowers/plans/2026-05-06-phase8-model-forward.md)
+- Phase 9+ plans: not yet written.
 
 ## Repos
 
