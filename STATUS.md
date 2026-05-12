@@ -4,16 +4,18 @@
 
 ## Current phase
 
-**🎉 Phase 9 — COMPLETE. First working generation.** Phase 10 (mlx_lm.generate integration with KV cache) not yet started.
+**🚀 Phase 10 — COMPLETE. Streaming generation via `mlx_lm.generate` works.** Phase 11 (4-bit quantization) not yet started.
 
-The MLX port generates correct text end-to-end:
+The MLX port now generates coherent text with KV cache + CCA-specific state cache. Example output at 4.6 tok/s on M3 Max BF16:
 
 ```
-Prompt: "What is the capital of France?" (with chat template)
-Output: "The capital of France is Paris."
+Tell me 3 interesting facts about state-space models.
+→
+"and control systems. Here are three interesting facts:
+1. Origin in Control Theory: ... [coherent ~170 token answer with Markdown + LaTeX] ..."
 ```
 
-Greedy decoding picks the same tokens as PyTorch would. All 80 layers compose correctly through embed → 40×(CCA attn) + 40×(MoE) interleaved → final_norm → tied lm_head.
+Cached generation produces byte-identical token sequences to the slow recompute-each-step path (`test_cached_generation.py`), confirming the cache is mathematically correct.
 
 ## What's done
 
@@ -41,6 +43,16 @@ Phase 2 (partial RoPE):
 - 3/3 partial RoPE parity tests pass: synthetic input, dumped cos/sin reproducibility, dumped Q with reference cos/sin
 - Confirmed: mlx-lm's built-in `nn.RoPE(dims=64, base=5e6, traditional=False)` correctly implements Zaya's partial RoPE within bf16 rounding noise — no custom helper needed
 - `nn.RoPE` added to `ZayaAttention` skeleton (Phase 4 will use it)
+
+Phase 10 (KV cache + CCA state cache + mlx_lm.generate):
+- `ZayaCCACache` extends mlx-lm's `KVCache` with two additional state arrays:
+  - `conv_states`: last 2 timesteps of `qk_packed0` (pre-conv concatenated Q+K), for the depthwise causal conv during single-token decode.
+  - `prev_hs`: previous step's hidden_states, for CCA's V₂ time-shifted stream.
+- `_NoOpCache` for MoE layers (no recurrent state across decode steps).
+- `Model.make_cache()` returns the per-layer list.
+- CCA.__call__ has a generation mode: prepend cached conv_states (2 steps) to current step (1) → conv produces 1 output step.
+- Verified: `mlx_lm.generate` produces coherent output; cached generation == recompute-each-step generation byte-for-byte.
+- Throughput: 4.6 tok/s on M3 Max BF16 (un-quantized).
 
 Phase 9 (ZayaForCausalLM logits + first generation):
 - `Model.__call__` composes ZayaModel(inputs, ...) → embed_tokens.as_linear (tied lm_head) → logits.
@@ -99,13 +111,9 @@ PyTorch stores cos/sin as bf16 in the model. MLX computes them in fp32 internall
 
 ## What's next
 
-**Phase 10: `mlx_lm.generate` integration with KV cache.** Today's prefill loop recomputes the full sequence on every token — fine for parity testing but quadratic in sequence length. The remaining engineering work is:
+**Phase 11: 4-bit quantization via `mlx_lm.convert`.** Apply `nn.quantize` to the model and save the quantized weights. Custom modules with non-Linear weights (CCA's Conv1d, the temp parameter, balancing_biases) need a `class_predicate` filter to skip them. Verify the quantized model still generates coherent text within perplexity tolerance.
 
-1. Implement `make_cache()` on `Model` that returns a per-layer cache list compatible with mlx-lm's `KVCache` interface. ATT layers need standard KV cache; MoE layers don't need any state.
-2. Plumb cache offset through CCA's depthwise conv and time-shifted V₂ stream (the `conv_states` and `prev_hs` from `ZayaDynamicCache`).
-3. Wire into `mlx_lm.generate` for streaming generation.
-
-After Phase 10: fast token-by-token generation. Then Phase 11 (4-bit quantize) and Phase 12 (HF upload).
+After Phase 11: ~4 GB on-disk model that runs at higher tok/s. Then Phase 12 (HF upload as `mlx-community/ZAYA1-8B-4bit`).
 
 ## Blockers
 
