@@ -12,10 +12,10 @@ import sys
 
 def _default_model_path():
     """Prefer local copy if present, else HF id."""
-    local = os.path.expanduser("~/models/ZAYA1-8B-4bit")
+    local = os.path.expanduser("~/models/ZAYA1-8B-6bit")
     if os.path.isdir(local):
         return local
-    return "mlx-community/ZAYA1-8B-4bit"
+    return "mlx-community/ZAYA1-8B-6bit"
 
 
 def main():
