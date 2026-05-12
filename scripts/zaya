@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Interactive chat with ZAYA1-8B (MLX, 4-bit).
+# Wraps the Python REPL so it uses the right venv automatically.
+
+VENV_PY="$HOME/code/personal/zaya1-mlx/validation/.venv/bin/python"
+SCRIPT="$HOME/code/personal/zaya1-mlx/scripts/zaya_chat.py"
+
+if [ ! -x "$VENV_PY" ]; then
+    echo "error: validation venv not found at $VENV_PY" >&2
+    echo "       run 'uv venv .venv --python 3.11' in ~/code/personal/zaya1-mlx/validation/" >&2
+    exit 1
+fi
+
+exec "$VENV_PY" "$SCRIPT" "$@"
