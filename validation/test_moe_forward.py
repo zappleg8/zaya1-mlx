@@ -79,7 +79,12 @@ def test_zaya_block_l1_output(loaded_model):
         hidden_states=hs, prev_router_hidden_states=None
     )
 
-    ref = _load_npy("L1_zaya_block_out.npy")
+    # The dump's _save_output sees ZayaBlock returning a 3-tuple
+    # (expert_output, mlp_bias=None, router_hidden_states_next). It filters
+    # out None and saves the 2-tuple as `_0` and `_1`. So:
+    #   L1_zaya_block_0.npy = expert_output (what we want)
+    #   L1_zaya_block_1.npy = router_hidden_states_next
+    ref = _load_npy("L1_zaya_block_0.npy")
     assert out.shape == ref.shape, f"shape: mlx={out.shape}, ref={ref.shape}"
     diff = float(mx.max(mx.abs(out.astype(mx.float32) - ref)))
-    assert diff < BLOCK_OUT_TOL, f"L1 zaya_block_out max abs diff: {diff}"
+    assert diff < BLOCK_OUT_TOL, f"L1 zaya_block expert_output max abs diff: {diff}"
