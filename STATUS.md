@@ -4,7 +4,7 @@
 
 ## Current phase
 
-**Phase 6 — COMPLETE.** Phase 7 (`ZayaDecoderMLPLayer` forward — wraps ZayaBlock in residual stream + input_norm, the MoE counterpart to Phase 5's ATT decoder layer) not yet started.
+**Phase 7 — COMPLETE.** Phase 8 (`ZayaModel` forward — wires 80 alternating decoder layers + embed + final_norm + residual+router state threading) not yet started.
 
 ## What's done
 
@@ -32,6 +32,11 @@ Phase 2 (partial RoPE):
 - 3/3 partial RoPE parity tests pass: synthetic input, dumped cos/sin reproducibility, dumped Q with reference cos/sin
 - Confirmed: mlx-lm's built-in `nn.RoPE(dims=64, base=5e6, traditional=False)` correctly implements Zaya's partial RoPE within bf16 rounding noise — no custom helper needed
 - `nn.RoPE` added to `ZayaAttention` skeleton (Phase 4 will use it)
+
+Phase 7 (MoE decoder layer):
+- `ZayaDecoderMLPLayer.__call__` mirrors Phase 5's ATT layer structure but routes through `ZayaBlock` and threads `prev_router_hidden_states`.
+- 3/3 layer tests pass at L1 end-to-end (using L0_self_attn_out + L0_layer_out as inputs): hidden_states output, residual output, router_hidden_states_next output.
+- Validation suite at 27/27.
 
 Phase 6 (MoE forward):
 - `ZayaRouter.__call__`: down_proj → optional EDA → rmsnorm → 3-layer GELU MLP → softmax + balancing biases (fp32) → top-1 argmax → returns `(route_prob_flat, expert_choice_flat, router_hidden_states_next)`.
@@ -73,9 +78,7 @@ PyTorch stores cos/sin as bf16 in the model. MLX computes them in fp32 internall
 
 ## What's next
 
-**Phase 7: ZayaDecoderMLPLayer forward.** Composes ZayaBlock from Phase 6 with the residual stream + input_norm machinery (analogous to Phase 5's ATT decoder layer). Short phase — just wires already-validated pieces.
-
-Gate: parity on `L1_self_attn_out` equivalent for MoE layer (likely `L1_layer_out` capturing residual state, and the layer's hidden_states output matching `L1_zaya_block_0` post-block).
+**Phase 8: ZayaModel forward.** Wires all 80 alternating decoder layers + embed_tokens + final ResidualScaling + final RMSNorm + residual/router state threading. After Phase 8, the model produces an end-to-end pre-lm_head hidden state. Phase 9 adds the lm_head; Phase 10 is the first actual generated text.
 
 ## Blockers
 
@@ -100,7 +103,8 @@ None.
 - Phase 4 plan: [`docs/superpowers/plans/2026-05-06-phase4-zaya-attention-forward.md`](docs/superpowers/plans/2026-05-06-phase4-zaya-attention-forward.md)
 - Phase 5 plan: [`docs/superpowers/plans/2026-05-06-phase5-att-decoder-layer.md`](docs/superpowers/plans/2026-05-06-phase5-att-decoder-layer.md)
 - Phase 6 plan: [`docs/superpowers/plans/2026-05-06-phase6-moe-forward.md`](docs/superpowers/plans/2026-05-06-phase6-moe-forward.md)
-- Phase 7+ plans: not yet written.
+- Phase 7 plan: [`docs/superpowers/plans/2026-05-06-phase7-moe-decoder-layer.md`](docs/superpowers/plans/2026-05-06-phase7-moe-decoder-layer.md)
+- Phase 8+ plans: not yet written.
 
 ## Repos
 
