@@ -4,9 +4,16 @@
 
 ## Current phase
 
-**Phase 8 — COMPLETE.** Phase 9 (`Model.__call__` with tied `lm_head` — produces logits) not yet started.
+**🎉 Phase 9 — COMPLETE. First working generation.** Phase 10 (mlx_lm.generate integration with KV cache) not yet started.
 
-**End-to-end forward through all 80 layers now works in MLX.** Max abs diff vs PyTorch reference: 2.41 on tensor range ~31 (7.7% relative) — realistic bf16 noise compounding over 80 layers.
+The MLX port generates correct text end-to-end:
+
+```
+Prompt: "What is the capital of France?" (with chat template)
+Output: "The capital of France is Paris."
+```
+
+Greedy decoding picks the same tokens as PyTorch would. All 80 layers compose correctly through embed → 40×(CCA attn) + 40×(MoE) interleaved → final_norm → tied lm_head.
 
 ## What's done
 
@@ -34,6 +41,12 @@ Phase 2 (partial RoPE):
 - 3/3 partial RoPE parity tests pass: synthetic input, dumped cos/sin reproducibility, dumped Q with reference cos/sin
 - Confirmed: mlx-lm's built-in `nn.RoPE(dims=64, base=5e6, traditional=False)` correctly implements Zaya's partial RoPE within bf16 rounding noise — no custom helper needed
 - `nn.RoPE` added to `ZayaAttention` skeleton (Phase 4 will use it)
+
+Phase 9 (ZayaForCausalLM logits + first generation):
+- `Model.__call__` composes ZayaModel(inputs, ...) → embed_tokens.as_linear (tied lm_head) → logits.
+- 2/2 logits tests pass: `global_lm_head_out` parity at bf16 tolerance; greedy next-token argmax matches PyTorch exactly.
+- **First end-to-end generation:** `"What is the capital of France?"` → `"The capital of France is Paris."` with proper chat template + `<think>` reasoning blocks.
+- Suite at 30/30.
 
 Phase 8 (ZayaModel forward — 80-layer end-to-end):
 - `ZayaModel.__call__` wires embed_tokens (or `input_embeddings` bypass) + 80 alternating decoder layers + final ResidualScaling + final RMSNorm.
@@ -86,7 +99,13 @@ PyTorch stores cos/sin as bf16 in the model. MLX computes them in fp32 internall
 
 ## What's next
 
-**Phase 9: Model.__call__ with tied lm_head.** One-line composition — pass `inputs` through `self.model(...)` to get hidden states, then project via `embed_tokens.as_linear(...)` to logits (tied embeddings). Tiny phase. After Phase 9, the model produces correct logits for any input. Phase 10 wraps it in `mlx_lm.generate` for actual text generation.
+**Phase 10: `mlx_lm.generate` integration with KV cache.** Today's prefill loop recomputes the full sequence on every token — fine for parity testing but quadratic in sequence length. The remaining engineering work is:
+
+1. Implement `make_cache()` on `Model` that returns a per-layer cache list compatible with mlx-lm's `KVCache` interface. ATT layers need standard KV cache; MoE layers don't need any state.
+2. Plumb cache offset through CCA's depthwise conv and time-shifted V₂ stream (the `conv_states` and `prev_hs` from `ZayaDynamicCache`).
+3. Wire into `mlx_lm.generate` for streaming generation.
+
+After Phase 10: fast token-by-token generation. Then Phase 11 (4-bit quantize) and Phase 12 (HF upload).
 
 ## Blockers
 
